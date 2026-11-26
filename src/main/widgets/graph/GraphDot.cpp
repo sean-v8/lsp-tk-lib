@@ -19,6 +19,8 @@
  * along with lsp-tk-lib. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <cmath>
+
 #include <lsp-plug.in/tk/tk.h>
 #include <lsp-plug.in/common/debug.h>
 #include <private/tk/style/BuiltinStyle.h>
@@ -406,6 +408,11 @@ namespace lsp
             return dx*dx + dy*dy <= r*r;
         }
 
+        void GraphDot::set_ctrl_axis_lock(bool enabled)
+        {
+            nXFlags = lsp_setflag(nXFlags, F_CTRL_AXIS_LOCK, enabled);
+        }
+
         void GraphDot::apply_motion(ssize_t x, ssize_t y, size_t flags)
         {
             // Get graph
@@ -430,17 +437,45 @@ namespace lsp
 //                    int(x), int(y), int(nMouseX), int(nMouseY));
 
             float dx = x - nMouseX, dy = y - nMouseY;
+            if (nXFlags & F_PICK_AXIS)
+            {
+                const float ax = std::abs(dx), ay = std::abs(dy);
+                const float threshold = 5.0f * lsp_max(1.0f, sScaling.get());
+                if ((ax >= threshold) && (ax >= 1.5f * ay))
+                    nXFlags = (nXFlags & ~F_PICK_AXIS) | F_LOCK_Y;
+                else if ((ay >= threshold) && (ay >= 1.5f * ax))
+                    nXFlags = (nXFlags & ~F_PICK_AXIS) | F_LOCK_X;
+                else
+                    return;
+            }
+
+            const bool axis_locked = nXFlags & (F_LOCK_X | F_LOCK_Y);
+            const bool accel = (flags & ws::MCF_CONTROL) && !axis_locked;
+            float origin_x = nMouseX - cv->canvas_aleft();
+            float origin_y = nMouseY - cv->canvas_atop();
+            if (axis_locked && (xaxis != NULL) && (yaxis != NULL))
+            {
+                // Start from the dot center even if the pointer grabbed its edge.
+                cv->origin(sOrigin.get(), &origin_x, &origin_y);
+                xaxis->apply(&origin_x, &origin_y, &fLastX, 1);
+                yaxis->apply(&origin_x, &origin_y, &fLastY, 1);
+            }
+            if (nXFlags & F_LOCK_X)
+                dx = 0.0f;
+            if (nXFlags & F_LOCK_Y)
+                dy = 0.0f;
+
             bool modified = false;
 
             // Update HValue
-            if (sHValue.sEditable.get())
+            if (sHValue.sEditable.get() && !(nXFlags & F_LOCK_X))
             {
                 float step = (nXFlags & F_FINE_TUNE) ?
-                    sHValue.sStep.get(flags & ws::MCF_CONTROL, !(flags & ws::MCF_SHIFT)) :
-                    sHValue.sStep.get(flags & ws::MCF_CONTROL, flags & ws::MCF_SHIFT);
+                    sHValue.sStep.get(accel, !(flags & ws::MCF_SHIFT)) :
+                    sHValue.sStep.get(accel, flags & ws::MCF_SHIFT);
 
-                float rx = nMouseX - cv->canvas_aleft() + step * dx;
-                float ry = nMouseY - cv->canvas_atop()  + step * dy;
+                float rx = origin_x + step * dx;
+                float ry = origin_y + step * dy;
 
                 float old       = sHValue.sValue.get();
                 float nvalue    = fLastX;
@@ -458,14 +493,14 @@ namespace lsp
             }
 
             // Update VValue
-            if (sVValue.sEditable.get())
+            if (sVValue.sEditable.get() && !(nXFlags & F_LOCK_Y))
             {
                 float step = (nXFlags & F_FINE_TUNE) ?
-                    sVValue.sStep.get(flags & ws::MCF_CONTROL, !(flags & ws::MCF_SHIFT)) :
-                    sVValue.sStep.get(flags & ws::MCF_CONTROL, flags & ws::MCF_SHIFT);
+                    sVValue.sStep.get(accel, !(flags & ws::MCF_SHIFT)) :
+                    sVValue.sStep.get(accel, flags & ws::MCF_SHIFT);
 
-                float rx = nMouseX - cv->canvas_aleft() + step * dx;
-                float ry = nMouseY - cv->canvas_atop()  + step * dy;
+                float rx = origin_x + step * dx;
+                float ry = origin_y + step * dy;
 
                 float old       = sVValue.sValue.get();
                 float nvalue    = fLastY;
@@ -524,6 +559,9 @@ namespace lsp
 
                 if (e->nCode == ws::MCB_RIGHT)
                     nXFlags    |= F_FINE_TUNE;
+                else if ((e->nCode == ws::MCB_LEFT) && (e->nState & ws::MCF_CONTROL) &&
+                         (nXFlags & F_CTRL_AXIS_LOCK) && sHValue.sEditable.get() && sVValue.sEditable.get())
+                    nXFlags    |= F_PICK_AXIS;
 
                 sSlots.execute(SLOT_BEGIN_EDIT, this);
             }
@@ -543,7 +581,7 @@ namespace lsp
             nMBState       &= ~(size_t(1) << e->nCode);
             if (nMBState == 0)
             {
-                nXFlags    &= ~(F_FINE_TUNE | F_EDITING);
+                nXFlags    &= ~(F_FINE_TUNE | F_EDITING | F_PICK_AXIS | F_LOCK_X | F_LOCK_Y);
                 sSlots.execute(SLOT_END_EDIT, this);
             }
 

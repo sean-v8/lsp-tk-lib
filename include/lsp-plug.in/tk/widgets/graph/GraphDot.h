@@ -69,7 +69,11 @@ namespace lsp
                     F_EDITABLE      = 1 << 0,
                     F_HIGHLIGHT     = 1 << 1,
                     F_EDITING       = 1 << 2,
-                    F_FINE_TUNE     = 1 << 3
+                    F_FINE_TUNE     = 1 << 3,
+                    F_CTRL_AXIS_LOCK = 1 << 4,
+                    F_PICK_AXIS     = 1 << 5,
+                    F_LOCK_X        = 1 << 6,
+                    F_LOCK_Y        = 1 << 7
                 };
 
                 typedef struct param_t
@@ -133,6 +137,8 @@ namespace lsp
                 virtual ~GraphDot();
 
                 virtual status_t            init();
+
+                void                        set_ctrl_axis_lock(bool enabled);
 
             public:
                 LSP_TK_PROPERTY(RangeFloat,         hvalue,                 &sHValue.sValue)
